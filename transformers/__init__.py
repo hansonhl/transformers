@@ -58,9 +58,6 @@ from .configuration_xlm import XLMConfig, XLM_PRETRAINED_CONFIG_ARCHIVE_MAP
 from .configuration_roberta import RobertaConfig, ROBERTA_PRETRAINED_CONFIG_ARCHIVE_MAP
 from .configuration_distilbert import DistilBertConfig, DISTILBERT_PRETRAINED_CONFIG_ARCHIVE_MAP
 
-# Pipelines
-from .pipeline import TextClassificationPipeline
-
 # Modeling
 if is_torch_available():
     from .modeling_utils import (PreTrainedModel, prune_layer, Conv1D)
@@ -163,6 +160,10 @@ from .modeling_tf_pytorch_utils import (convert_tf_weight_name_to_pt_weight_name
                                         load_tf2_checkpoint_in_pytorch_model,
                                         load_tf2_weights_in_pytorch_model,
                                         load_tf2_model_in_pytorch_model)
+
+# Pipelines
+# from .pipeline_ import TextClassificationPipeline
+from .pipelines import Pipeline, pipeline, TextClassificationPipeline
 
 if not is_tf_available() and not is_torch_available():
     logger.warning("Neither PyTorch nor TensorFlow >= 2.0 have been found."
