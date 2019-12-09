@@ -852,7 +852,7 @@ class PreTrainedTokenizer(object):
 
         if return_attention_masks:
             # Allow the model to not give any special attention to padded input
-            batch_outputs['encoder_attention_mask'] = [[0] * len(v) for v in batch_outputs['input_ids']]
+            batch_outputs['attention_mask'] = [[0] * len(v) for v in batch_outputs['input_ids']]
 
         if return_tensors is not None:
 
@@ -871,12 +871,12 @@ class PreTrainedTokenizer(object):
                 elif return_tensors is not None:
                     logger.warning("Unable to convert output to tensors format {}, PyTorch or TensorFlow is not available.".format(return_tensors))
 
-        # encoder_attention_mask requires 1 for real token, 0 for padding, just invert value
+        # attention_mask requires 1 for real token, 0 for padding, just invert value
         if return_attention_masks:
             if is_tf_available():
-                batch_outputs['encoder_attention_mask'] = tf.abs(batch_outputs['encoder_attention_mask'] - 1)
+                batch_outputs['attention_mask'] = tf.abs(batch_outputs['attention_mask'] - 1)
             else:
-                batch_outputs['encoder_attention_mask'] = torch.abs(batch_outputs['encoder_attention_mask'] - 1)
+                batch_outputs['attention_mask'] = torch.abs(batch_outputs['attention_mask'] - 1)
 
 
 
