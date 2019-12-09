@@ -868,7 +868,11 @@ class PreTrainedTokenizer(object):
                     logger.warning("Unable to convert output to tensors format {}, PyTorch or TensorFlow is not available.".format(return_tensors))
 
         # encoder_attention_mask requires 1 for real token, 0 for padding, just invert value
-        batch_outputs['encoder_attention_mask'] = (batch_outputs['encoder_attention_mask'] - 1).abs()
+        if is_tf_available():
+            batch_outputs['encoder_attention_mask'] = tf.abs(batch_outputs['encoder_attention_mask'] - 1)
+        else:
+            batch_outputs['encoder_attention_mask'] = torch.abs(batch_outputs['encoder_attention_mask'] - 1)
+
         return batch_outputs
 
     def prepare_for_model(self, ids, pair_ids=None, max_length=None, add_special_tokens=False, stride=0,
