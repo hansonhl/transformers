@@ -36,12 +36,6 @@ SPECIAL_TOKENS_MAP_FILE = 'special_tokens_map.json'
 ADDED_TOKENS_FILE = 'added_tokens.json'
 TOKENIZER_CONFIG_FILE = 'tokenizer_config.json'
 
-PADDING_VALUES = {
-    'input_ids': 0,
-    'token_type_ids': 1,
-    'special_tokens_mask': 1
-}
-
 class PreTrainedTokenizer(object):
     """ Base class for all tokenizers.
     Handle all the shared methods for tokenization and special tokens as well as methods dowloading/caching/loading pretrained tokenizers as well as adding tokens to the vocabulary.
@@ -841,25 +835,40 @@ class PreTrainedTokenizer(object):
                 ids, pair_ids = ids_or_pair_ids, None
             outputs = self.encode_plus(ids, pair_ids, add_special_tokens=add_special_tokens, max_length=max_length,
                                        stride=stride, truncation_strategy=truncation_strategy, return_tensors=None)
+
+            # Append the non-padded length to the output
+            outputs['input_len'] = len(outputs['input_ids'])
+
             for key, value in outputs.items():
                 if key not in batch_outputs:
                     batch_outputs[key] = []
                 batch_outputs[key].append(value)
 
-        if return_tensors is None:
-            return batch_outputs
+        # Compute longest sequence size
+        max_seq_len = max(map(len, batch_outputs['input_ids']))
 
-        # Do the tensor conversion in batch
-        for key, value in batch_outputs.items():
-            max_seq_len = max(map(len, value))
-            padded_value = [v + [PADDING_VALUES[key]] * (max_seq_len - len(v)) for v in value]
-            if return_tensors == 'tf' and is_tf_available():
-                batch_outputs[key] = tf.constant(padded_value)
-            elif return_tensors == 'pt' and is_torch_available():
-                batch_outputs[key] = torch.tensor(padded_value)
-            elif return_tensors is not None:
-                logger.warning("Unable to convert output to tensors format {}, PyTorch or TensorFlow is not available.".format(return_tensors))
+        # Allow the model to not give any special attention to padded input
+        batch_outputs['encoder_attention_mask'] = [[0] * len(v) for v in batch_outputs['input_ids']]
 
+        if return_tensors is not None:
+
+            # Do the tensor conversion in batch
+            for key, value in batch_outputs.items():
+
+                padded_value = value
+                if key != 'input_len':
+                    # Padding handle
+                    padded_value = [v + [self.pad_token_id if key == 'input_ids' else 1] * (max_seq_len - len(v)) for v in padded_value]
+
+                if return_tensors == 'tf' and is_tf_available():
+                    batch_outputs[key] = tf.constant(padded_value)
+                elif return_tensors == 'pt' and is_torch_available():
+                    batch_outputs[key] = torch.tensor(padded_value)
+                elif return_tensors is not None:
+                    logger.warning("Unable to convert output to tensors format {}, PyTorch or TensorFlow is not available.".format(return_tensors))
+
+        # encoder_attention_mask requires 1 for real token, 0 for padding, just invert value
+        batch_outputs['encoder_attention_mask'] = (batch_outputs['encoder_attention_mask'] - 1).abs()
         return batch_outputs
 
     def prepare_for_model(self, ids, pair_ids=None, max_length=None, add_special_tokens=False, stride=0,
