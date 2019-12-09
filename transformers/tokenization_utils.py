@@ -801,6 +801,8 @@ class PreTrainedTokenizer(object):
                           stride=0,
                           truncation_strategy='longest_first',
                           return_tensors=None,
+                          return_input_lengths=False,
+                          return_attention_masks=False,
                           **kwargs):
         """
         Returns a dictionary containing the encoded sequence or sequence pair and additional informations:
@@ -837,7 +839,8 @@ class PreTrainedTokenizer(object):
                                        stride=stride, truncation_strategy=truncation_strategy, return_tensors=None)
 
             # Append the non-padded length to the output
-            outputs['input_len'] = len(outputs['input_ids'])
+            if return_input_lengths:
+                outputs['input_len'] = len(outputs['input_ids'])
 
             for key, value in outputs.items():
                 if key not in batch_outputs:
@@ -847,8 +850,9 @@ class PreTrainedTokenizer(object):
         # Compute longest sequence size
         max_seq_len = max(map(len, batch_outputs['input_ids']))
 
-        # Allow the model to not give any special attention to padded input
-        batch_outputs['encoder_attention_mask'] = [[0] * len(v) for v in batch_outputs['input_ids']]
+        if return_attention_masks:
+            # Allow the model to not give any special attention to padded input
+            batch_outputs['encoder_attention_mask'] = [[0] * len(v) for v in batch_outputs['input_ids']]
 
         if return_tensors is not None:
 
@@ -868,10 +872,13 @@ class PreTrainedTokenizer(object):
                     logger.warning("Unable to convert output to tensors format {}, PyTorch or TensorFlow is not available.".format(return_tensors))
 
         # encoder_attention_mask requires 1 for real token, 0 for padding, just invert value
-        if is_tf_available():
-            batch_outputs['encoder_attention_mask'] = tf.abs(batch_outputs['encoder_attention_mask'] - 1)
-        else:
-            batch_outputs['encoder_attention_mask'] = torch.abs(batch_outputs['encoder_attention_mask'] - 1)
+        if return_attention_masks:
+            if is_tf_available():
+                batch_outputs['encoder_attention_mask'] = tf.abs(batch_outputs['encoder_attention_mask'] - 1)
+            else:
+                batch_outputs['encoder_attention_mask'] = torch.abs(batch_outputs['encoder_attention_mask'] - 1)
+
+
 
         return batch_outputs
 
