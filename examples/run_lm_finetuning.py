@@ -413,7 +413,9 @@ def evaluate(args, model, tokenizer, prefix=""):
     nb_eval_steps = 0
     model.eval()
 
-    for batch in tqdm(eval_dataloader, desc="Evaluating"):
+    for batch in eval_dataloader:
+        if step % 50 == 0:
+            logger.info("Step %d", step)
         if args.anagen:
             batch, attention_mask = batch
 
