@@ -92,16 +92,23 @@ class TextDataset(Dataset):
             logger.info("Creating features from dataset file at %s", directory)
 
             self.examples = []
-            with open(file_path, encoding="utf-8") as f:
-                text = f.read()
 
-            tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
+            if args.anagen:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    for line in f:
+                        text = line.strip()
+                        tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
+                        self.examples.append(tokenizer.build_inputs_with_special_tokens)
+            else:
+                with open(file_path, encoding="utf-8") as f:
+                    text = f.read()
+                tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
 
-            for i in range(0, len(tokenized_text)-block_size+1, block_size): # Truncate in block of block_size
-                self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i:i+block_size]))
-            # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
-            # If your dataset is small, first you should loook for a bigger one :-) and second you
-            # can change this behavior by adding (model specific) padding.
+                for i in range(0, len(tokenized_text)-block_size+1, block_size): # Truncate in block of block_size
+                    self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text[i:i+block_size]))
+                # Note that we are loosing the last truncated example here for the sake of simplicity (no padding)
+                # If your dataset is small, first you should loook for a bigger one :-) and second you
+                # can change this behavior by adding (model specific) padding.
 
             logger.info("Saving features into cached file %s", cached_features_file)
             with open(cached_features_file, 'wb') as handle:
