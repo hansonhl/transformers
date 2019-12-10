@@ -94,11 +94,15 @@ class TextDataset(Dataset):
             self.examples = []
 
             if args.anagen:
-                with open(file_path, "w", encoding="utf-8") as f:
+                logger.info("Using anagen style dataset")
+                line_count = 0
+                with open(file_path, "r", encoding="utf-8") as f:
                     for line in f:
+                        line_count += 1
                         text = line.strip()
                         tokenized_text = tokenizer.convert_tokens_to_ids(tokenizer.tokenize(text))
-                        self.examples.append(tokenizer.build_inputs_with_special_tokens)
+                        self.examples.append(tokenizer.build_inputs_with_special_tokens(tokenized_text))
+                logger.info("read %d lines" % line_count)
             else:
                 with open(file_path, encoding="utf-8") as f:
                     text = f.read()
@@ -185,6 +189,18 @@ def mask_tokens(inputs, tokenizer, args):
     # The rest of the time (10% of the time) we keep the masked input tokens unchanged
     return inputs, labels
 
+def my_collate(batch, tokenizer):
+    pad_token_id = None
+    if isinstance(tokenizer, GPT2Tokenizer):
+        pad_token_id = tokenizer.eos_token_id
+    else:
+        raise NotImplementedError
+    sorted_batch = sorted(batch, key=lambda b: b.shape[0], reverse=True)
+    padded = torch.nn.utils.rnn.pad_sequence(sorted_batch, batch_first=True,
+                                             padding_value=pad_token_id)
+    # logging.info("@@@@@@ padded.shape: {}".format(padded.shape))
+    return padded
+
 
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
@@ -193,7 +209,12 @@ def train(args, train_dataset, model, tokenizer):
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
-    train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
+    if args.anagen:
+        collate_fn = lambda b: my_collate(b, tokenizer)
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
+                                      collate_fn=collate_fn)
+    else:
+        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size)
 
     if args.max_steps > 0:
         t_total = args.max_steps
@@ -269,6 +290,8 @@ def train(args, train_dataset, model, tokenizer):
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
+            # if step == 0:
+            #     logger.info("@@@@@@@ batch has size {}".format(batch.shape))
 
             # Skip past any already trained steps if resuming training
             if steps_trained_in_current_epoch > 0:
@@ -553,7 +576,11 @@ def main():
                                           '</anaphor>']
             }
         num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
-        print('We have added', num_added_toks, 'tokens')
+        # logging.info('We have added %d tokens' % num_added_toks)
+        # logging.info("tokenizer has pad token %s" % tokenizer.pad_token)
+        # logging.info("tokenizer has eos token %s" % tokenizer.eos_token)
+        # logging.info("eos token id %d" % tokenizer.eos_token_id)
+        # return
 
 
     if args.block_size <= 0:
