@@ -396,7 +396,7 @@ def evaluate(args, model, tokenizer, prefix=""):
     eval_sampler = SequentialSampler(eval_dataset)
     if args.anagen:
         collate_fn = lambda b: my_collate(b, tokenizer)
-        train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
+        train_dataloader = DataLoader(eval_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
                                       collate_fn=collate_fn)
     else:
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
