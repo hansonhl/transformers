@@ -198,8 +198,12 @@ def my_collate(batch, tokenizer):
     sorted_batch = sorted(batch, key=lambda b: b.shape[0], reverse=True)
     padded = torch.nn.utils.rnn.pad_sequence(sorted_batch, batch_first=True,
                                              padding_value=pad_token_id)
+    lengths = torch.LongTensor([len(x) for x in sorted_batch])
+    padding_mask = (torch.arange(padded.shape[1])[None, :] < lengths[:, None]) \
+                   .type(torch.FloatTensor)
+
     # logging.info("@@@@@@ padded.shape: {}".format(padded.shape))
-    return padded
+    return padded, padding_mask
 
 
 def train(args, train_dataset, model, tokenizer):
@@ -292,6 +296,8 @@ def train(args, train_dataset, model, tokenizer):
         for step, batch in enumerate(epoch_iterator):
             # if step == 0:
             #     logger.info("@@@@@@@ batch has size {}".format(batch.shape))
+            if args.anagen:
+                batch, attention_mask = batch
 
             # Skip past any already trained steps if resuming training
             if steps_trained_in_current_epoch > 0:
@@ -302,7 +308,12 @@ def train(args, train_dataset, model, tokenizer):
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
             model.train()
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+            if args.anagen:
+                assert not args.mlm
+                attention_mask = attention_mask.to(args.device)
+                outputs = model(inputs, attention_mask=attention_mask, labels=labels)
+            else:
+                outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
             if args.n_gpu > 1:
@@ -401,12 +412,20 @@ def evaluate(args, model, tokenizer, prefix=""):
     model.eval()
 
     for batch in tqdm(eval_dataloader, desc="Evaluating"):
+        if args.anagen:
+            batch, attention_mask = batch
+
         inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
         inputs = inputs.to(args.device)
         labels = labels.to(args.device)
 
         with torch.no_grad():
-            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+            if args.anagen:
+                attention_mask = attention_mask.to(args.device)
+                assert not args.mlm
+                outputs = model(inputs, attention_mask=attention_mask, labels=labels)
+            else:
+                outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
             lm_loss = outputs[0]
             eval_loss += lm_loss.mean().item()
         nb_eval_steps += 1
