@@ -17,6 +17,20 @@
 Fine-tuning the library models for language modeling on a text file (GPT, GPT-2, BERT, RoBERTa).
 GPT and GPT-2 are fine-tuned using a causal language modeling (CLM) loss while BERT and RoBERTa are fine-tuned
 using a masked language modeling (MLM) loss.
+
+example: training on GPT-2/GPT on wiki data
+
+export TRAIN_FILE=/path/to/dataset/wiki.train.raw
+export TEST_FILE=/path/to/dataset/wiki.test.raw
+
+python run_lm_finetuning.py \
+    --output_dir=output \
+    --model_type=gpt2 \
+    --model_name_or_path=gpt2 \
+    --do_train \
+    --train_data_file=$TRAIN_FILE \
+    --do_eval \
+    --eval_data_file=$TEST_FILE
 """
 
 from __future__ import absolute_import, division, print_function
@@ -248,7 +262,7 @@ def train(args, train_dataset, model, tokenizer):
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
-            
+
             # Skip past any already trained steps if resuming training
             if steps_trained_in_current_epoch > 0:
                 steps_trained_in_current_epoch -= 1
@@ -468,6 +482,9 @@ def main():
                         help="For distributed training: local_rank")
     parser.add_argument('--server_ip', type=str, default='', help="For distant debugging.")
     parser.add_argument('--server_port', type=str, default='', help="For distant debugging.")
+
+    parser.add_argument('--anagen', action='store_true',
+                        help="Use special settings for anaphor generation")
     args = parser.parse_args()
 
     if args.model_type in ["bert", "roberta", "distilbert", "camembert"] and not args.mlm:
@@ -519,6 +536,19 @@ def main():
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
                                                 do_lower_case=args.do_lower_case,
                                                 cache_dir=args.cache_dir if args.cache_dir else None)
+
+    # configure special tokens here
+    if args.anagen:
+        special_tokens_dict = {
+            'additional_special_tokens': ['<anteced>',
+                                          '</anteced>',
+                                          '<anaphor>',
+                                          '</anaphor>']
+            }
+        num_added_toks = tokenizer.add_special_tokens(special_tokens_dict)
+        print('We have added', num_added_toks, 'tokens')
+
+
     if args.block_size <= 0:
         args.block_size = tokenizer.max_len_single_sentence  # Our input block size will be the max possible for the model
     args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
@@ -526,6 +556,10 @@ def main():
                                         from_tf=bool('.ckpt' in args.model_name_or_path),
                                         config=config,
                                         cache_dir=args.cache_dir if args.cache_dir else None)
+
+    if args.anagen:
+        model.resize_token_embeddings(len(tokenizer))
+
     model.to(args.device)
 
     if args.local_rank == 0:
@@ -580,7 +614,7 @@ def main():
         for checkpoint in checkpoints:
             global_step = checkpoint.split('-')[-1] if len(checkpoints) > 1 else ""
             prefix = checkpoint.split('/')[-1] if checkpoint.find('checkpoint') != -1 else ""
-            
+
             model = model_class.from_pretrained(checkpoint)
             model.to(args.device)
             result = evaluate(args, model, tokenizer, prefix=prefix)
