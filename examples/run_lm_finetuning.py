@@ -292,8 +292,10 @@ def train(args, train_dataset, model, tokenizer):
     train_iterator = trange(epochs_trained, int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproducibility (even between python 2 and 3)
     for _ in train_iterator:
-        epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-        for step, batch in enumerate(epoch_iterator):
+        # epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
+        for step, batch in enumerate(train_dataloader):
+            if step % 50 == 0:
+                logger.info("Step %d", step)
             # if step == 0:
             #     logger.info("@@@@@@@ batch has size {}".format(batch.shape))
             if args.anagen:
