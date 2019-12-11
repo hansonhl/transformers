@@ -413,7 +413,7 @@ def evaluate(args, model, tokenizer, prefix=""):
     nb_eval_steps = 0
     model.eval()
 
-    for batch in eval_dataloader:
+    for step, batch in enumerate(eval_dataloader):
         if step % 50 == 0:
             logger.info("Step %d", step)
         if args.anagen:
