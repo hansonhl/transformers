@@ -298,7 +298,7 @@ GPT2_INPUTS_DOCSTRING = r"""    Inputs:
         **past**:
             list of ``torch.FloatTensor`` (one for each layer):
             that contains pre-computed hidden-states (key and values in the attention blocks) as computed by the model
-            (see `past` output below). Can be used to speed up sequential decoding. The token ids which have their past given to this model 
+            (see `past` output below). Can be used to speed up sequential decoding. The token ids which have their past given to this model
             should not be passed as input ids as they have already been computed.
         **attention_mask**: (`optional`) ``torch.FloatTensor`` of shape ``(batch_size, sequence_length)``:
             Mask to avoid performing attention on padding token indices.
@@ -331,7 +331,7 @@ class GPT2Model(GPT2PreTrainedModel):
         **past**:
             list of ``torch.FloatTensor`` (one for each layer) of shape ``(2, batch_size, num_heads, sequence_length, embed_size_per_head)``:
             that contains pre-computed hidden-states (key and values in the attention blocks).
-            Can be used (see `past` input) to speed up sequential decoding. The token ids which have their past given to this model 
+            Can be used (see `past` input) to speed up sequential decoding. The token ids which have their past given to this model
             should not be passed as input ids as they have already been computed.
         **hidden_states**: (`optional`, returned when ``config.output_hidden_states=True``)
             list of ``torch.FloatTensor`` (one for the output of each layer + the output of the embeddings)
@@ -505,7 +505,7 @@ class GPT2LMHeadModel(GPT2PreTrainedModel):
         **past**:
             list of ``torch.FloatTensor`` (one for each layer) of shape ``(2, batch_size, num_heads, sequence_length, embed_size_per_head)``:
             that contains pre-computed hidden-states (key and values in the attention blocks).
-            Can be used (see `past` input) to speed up sequential decoding. The token ids which have their past given to this model 
+            Can be used (see `past` input) to speed up sequential decoding. The token ids which have their past given to this model
             should not be passed as input ids as they have already been computed.
         **hidden_states**: (`optional`, returned when ``config.output_hidden_states=True``)
             list of ``torch.FloatTensor`` (one for the output of each layer + the output of the embeddings)
@@ -598,7 +598,7 @@ class GPT2DoubleHeadsModel(GPT2PreTrainedModel):
         **past**:
             list of ``torch.FloatTensor`` (one for each layer) of shape ``(2, batch_size, num_heads, sequence_length, embed_size_per_head)``:
             that contains pre-computed hidden-states (key and values in the attention blocks).
-            Can be used (see `past` input) to speed up sequential decoding. The token ids which have their past given to this model 
+            Can be used (see `past` input) to speed up sequential decoding. The token ids which have their past given to this model
             should not be passed as input ids as they have already been computed.
         **hidden_states**: (`optional`, returned when ``config.output_hidden_states=True``)
             list of ``torch.FloatTensor`` (one for the output of each layer + the output of the embeddings)
@@ -612,15 +612,15 @@ class GPT2DoubleHeadsModel(GPT2PreTrainedModel):
 
         import torch
         from transformers import GPT2Tokenizer, GPT2DoubleHeadsModel
-        
+
         tokenizer = GPT2Tokenizer.from_pretrained('gpt2')
         model = GPT2DoubleHeadsModel.from_pretrained('gpt2')
-        
+
         # Add a [CLS] to the vocabulary (we should train it also!)
         tokenizer.add_special_tokens({'cls_token': '[CLS]'})
         model.resize_token_embeddings(len(tokenizer))  # Update the model embeddings with the new vocabulary size
         print(tokenizer.cls_token_id, len(tokenizer))  # The newly token the last token of the vocabulary
-        
+
         choices = ["Hello, my dog is cute [CLS]", "Hello, my cat is cute [CLS]"]
         encoded_choices = [tokenizer.encode(s) for s in choices]
         cls_token_location = [tokens.index(tokenizer.cls_token_id) for tokens in encoded_choices]
@@ -673,3 +673,43 @@ class GPT2DoubleHeadsModel(GPT2PreTrainedModel):
             outputs = (loss,) + outputs
 
         return outputs  # (lm loss), (mc loss), lm logits, mc logits, presents, (all hidden_states), (attentions)
+
+class AnagenGPT2LMHeadModel(GPT2LMHeadModel):
+    def forward(self, input_ids=None, past=None, attention_mask=None, token_type_ids=None, position_ids=None, head_mask=None, inputs_embeds=None,
+                labels=None, lengths=None, scaling=None):
+        transformer_outputs = self.transformer(input_ids,
+                                               past=past,
+                                               attention_mask=attention_mask,
+                                               token_type_ids=token_type_ids,
+                                               position_ids=position_ids,
+                                               head_mask=head_mask,
+                                               inputs_embeds=inputs_embeds)
+        hidden_states = transformer_outputs[0]
+        # print("hidden_states.shape", hidden_states.shape) # torch.Size([3, 73, 768])
+
+        lm_logits = self.lm_head(hidden_states)
+
+        outputs = (lm_logits,) + transformer_outputs[1:]
+        if labels is not None:
+            logits_mask = attention_mask.bool()
+            logits_mask[torch.arange(lm_logits.size(0)), lengths-1] = False
+
+            labels_mask = attention_mask.bool()
+            labels_mask[:, 0] = False
+
+            # Flatten the tokens
+            loss_fct = CrossEntropyLoss(ignore_index=-1, reduction="none")
+            flat_logits = lm_logits.view(-1, lm_logits.size(-1))
+            flat_logits_mask = logits_mask.view(-1)
+            flat_labels = labels.view(-1)
+            flat_labels_mask = labels_mask.view(-1)
+            flat_scaling = scaling.view(-1)
+            filtered_logits = flat_logits[flat_logits_mask]
+            filtered_labels = flat_labels[flat_labels_mask]
+            filtered_scaling = flat_scaling[flat_labels_mask]
+            losses = loss_fct(filtered_logits, filtered_labels)
+            loss = torch.mean(losses * filtered_scaling)
+
+            outputs = (loss,) + outputs
+
+        return outputs  # (loss), lm_logits, presents, (all hidden_states), (attentions)

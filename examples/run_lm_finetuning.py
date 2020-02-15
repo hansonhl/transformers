@@ -59,6 +59,7 @@ from tqdm import tqdm, trange
 from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
                                   BertConfig, BertForMaskedLM, BertTokenizer,
                                   GPT2Config, GPT2LMHeadModel, GPT2Tokenizer,
+                                  AnagenGPT2LMHeadModel,
                                   OpenAIGPTConfig, OpenAIGPTLMHeadModel, OpenAIGPTTokenizer,
                                   RobertaConfig, RobertaForMaskedLM, RobertaTokenizer,
                                   DistilBertConfig, DistilBertForMaskedLM, DistilBertTokenizer,
@@ -205,6 +206,40 @@ def my_collate(batch, tokenizer):
     # logging.info("@@@@@@ padded.shape: {}".format(padded.shape))
     return padded, padding_mask
 
+def tag_scale(batch, tokenizer, scale_factor):
+    antec_beg_tok_id = tokenizer.encode("<anteced>")[0]
+    antec_end_tok_id = tokenizer.encode("</anteced>")[0]
+    anaph_beg_tok_id = tokenizer.encode("<anaphor>")[0]
+    anaph_end_tok_id = tokenizer.encode("</anaphor>")[0]
+
+
+    # partially vectorized version ~ 30 times faster!
+    antec_beg_idx = torch.tensor([s.tolist().index(antec_beg_tok_id) for s in batch]).view(-1, 1)
+    antec_end_idx = torch.tensor([s.tolist().index(antec_end_tok_id) for s in batch]).view(-1, 1)
+    anaph_beg_idx = torch.tensor([s.tolist().index(anaph_beg_tok_id) for s in batch]).view(-1, 1)
+    anaph_end_idx = torch.tensor([s.tolist().index(anaph_end_tok_id) for s in batch]).view(-1, 1)
+
+    ranges = torch.arange(batch.size(1)).view(1, -1).repeat_interleave(batch.size(0), dim=0)
+    booltensor = ((ranges >= antec_beg_idx) & (ranges <= antec_end_idx)) | ((ranges >= anaph_beg_idx) & (ranges <= anaph_end_idx))
+    res = torch.where(booltensor, torch.tensor(1.5), torch.tensor(1.))
+    return res
+
+def my_scaled_collate(batch, tokenizer, scale_method, scale_factor):
+    pad_token_id = None
+    if isinstance(tokenizer, GPT2Tokenizer):
+        pad_token_id = tokenizer.eos_token_id
+    else:
+        raise NotImplementedError
+    sorted_batch = sorted(batch, key=lambda b: b.shape[0], reverse=True)
+    padded = torch.nn.utils.rnn.pad_sequence(sorted_batch, batch_first=True,
+                                             padding_value=pad_token_id)
+    scaling = tag_scale(padded, tokenizer, scale_factor)
+    lengths = torch.LongTensor([len(x) for x in sorted_batch])
+    padding_mask = (torch.arange(padded.shape[1])[None, :] < lengths[:, None]) \
+                   .type(torch.FloatTensor)
+
+    return padded, padding_mask, lengths, scaling
+
 
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
@@ -214,7 +249,10 @@ def train(args, train_dataset, model, tokenizer):
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     if args.anagen:
-        collate_fn = lambda b: my_collate(b, tokenizer)
+        if args.scale:
+            collate_fn = lambda b: my_scaled_collate(b, tokenizer, args.scale, args.scale_factor)
+        else:
+            collate_fn = lambda b: my_collate(b, tokenizer)
         train_dataloader = DataLoader(train_dataset, sampler=train_sampler, batch_size=args.train_batch_size,
                                       collate_fn=collate_fn)
     else:
@@ -299,7 +337,10 @@ def train(args, train_dataset, model, tokenizer):
             # if step == 0:
             #     logger.info("@@@@@@@ batch has size {}".format(batch.shape))
             if args.anagen:
-                batch, attention_mask = batch
+                if args.scale:
+                    batch, attention_mask, lengths, scaling = batch
+                else:
+                    batch, attention_mask = batch
 
             # Skip past any already trained steps if resuming training
             if steps_trained_in_current_epoch > 0:
@@ -310,12 +351,20 @@ def train(args, train_dataset, model, tokenizer):
             inputs = inputs.to(args.device)
             labels = labels.to(args.device)
             model.train()
+
             if args.anagen:
                 assert not args.mlm
                 attention_mask = attention_mask.to(args.device)
-                outputs = model(inputs, attention_mask=attention_mask, labels=labels)
+                if args.scale:
+                    outputs = model(inputs, attention_mask=attention_mask,
+                                    labels=labels, lengths=lengths, scaling=scaling)
+                else:
+                    outputs = model(inputs, attention_mask=attention_mask,
+                                    labels=labels)
             else:
-                outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
+                outputs = model(inputs, masked_lm_labels=labels) \
+                    if args.mlm else model(inputs, labels=labels)
+
             loss = outputs[0]  # model outputs are always tuple in transformers (see doc)
 
             if args.n_gpu > 1:
@@ -543,6 +592,8 @@ def main():
 
     parser.add_argument('--anagen', action='store_true',
                         help="Use special settings for anaphor generation")
+    parser.add_argument('--scale', type=str, default=None, help='Scale method for anagen loss')
+    parser.add_argument('--scale_factor', type=float, default=1.0, help='Scale factor for loss')
     args = parser.parse_args()
 
     if args.model_type in ["bert", "roberta", "distilbert", "camembert"] and not args.mlm:
@@ -589,6 +640,9 @@ def main():
         torch.distributed.barrier()  # Barrier to make sure only the first process in distributed training download model & vocab
 
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
+    if args.anagen and args.model_type == 'gpt2':
+        model_class = AnagenGPT2LMHeadModel
+
     config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path,
                                           cache_dir=args.cache_dir if args.cache_dir else None)
     tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
