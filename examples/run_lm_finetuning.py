@@ -356,8 +356,8 @@ def train(args, train_dataset, model, tokenizer):
                 assert not args.mlm
                 attention_mask = attention_mask.to(args.device)
                 if args.scale:
-                    lengths.to(args.device)
-                    scaling.to(args.device)
+                    lengths = lengths.to(args.device)
+                    scaling = scaling.to(args.device)
                     outputs = model(inputs, attention_mask=attention_mask,
                                     labels=labels, lengths=lengths, scaling=scaling)
                 else:
