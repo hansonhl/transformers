@@ -81,6 +81,7 @@ if is_torch_available():
                                     load_tf_weights_in_transfo_xl, TRANSFO_XL_PRETRAINED_MODEL_ARCHIVE_MAP)
     from .modeling_gpt2 import (GPT2PreTrainedModel, GPT2Model,
                                 GPT2LMHeadModel, GPT2DoubleHeadsModel,
+                                AnagenGPT2LMHeadModel,
                                 load_tf_weights_in_gpt2, GPT2_PRETRAINED_MODEL_ARCHIVE_MAP)
     from .modeling_ctrl import (CTRLPreTrainedModel, CTRLModel,
                                 CTRLLMHeadModel,
