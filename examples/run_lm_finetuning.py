@@ -49,10 +49,10 @@ import torch
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 
-try:
-    from torch.utils.tensorboard import SummaryWriter
-except:
-    from tensorboardX import SummaryWriter
+# try:
+#     from torch.utils.tensorboard import SummaryWriter
+# except:
+#     from tensorboardX import SummaryWriter
 
 from tqdm import tqdm, trange
 
@@ -243,8 +243,8 @@ def my_scaled_collate(batch, tokenizer, scale_method, scale_factor):
 
 def train(args, train_dataset, model, tokenizer):
     """ Train the model """
-    if args.local_rank in [-1, 0]:
-        tb_writer = SummaryWriter()
+    # if args.local_rank in [-1, 0]:
+    #     tb_writer = SummaryWriter()
 
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
@@ -446,7 +446,10 @@ def evaluate(args, model, tokenizer, prefix=""):
     # Note that DistributedSampler samples randomly
     eval_sampler = SequentialSampler(eval_dataset)
     if args.anagen:
-        collate_fn = lambda b: my_collate(b, tokenizer)
+        if args.scale:
+            collate_fn = lambda b: my_scaled_collate(b, tokenizer, args.scale, args.scale_factor)
+        else:
+            collate_fn = lambda b: my_collate(b, tokenizer)
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size,
                                       collate_fn=collate_fn)
     else:
@@ -468,7 +471,10 @@ def evaluate(args, model, tokenizer, prefix=""):
         if step % 50 == 0:
             logger.info("Step %d", step)
         if args.anagen:
-            batch, attention_mask = batch
+            if args.scale:
+                batch, attention_mask, lengths, scaling = batch
+            else:
+                batch, attention_mask = batch
 
         inputs, labels = mask_tokens(batch, tokenizer, args) if args.mlm else (batch, batch)
         inputs = inputs.to(args.device)
@@ -476,9 +482,16 @@ def evaluate(args, model, tokenizer, prefix=""):
 
         with torch.no_grad():
             if args.anagen:
-                attention_mask = attention_mask.to(args.device)
                 assert not args.mlm
-                outputs = model(inputs, attention_mask=attention_mask, labels=labels)
+                attention_mask = attention_mask.to(args.device)
+                if args.scale:
+                    lengths = lengths.to(args.device)
+                    scaling = scaling.to(args.device)
+                    outputs = model(inputs, attention_mask=attention_mask,
+                                    labels=labels, lengths=lengths, scaling=scaling)
+                else:
+                    outputs = model(inputs, attention_mask=attention_mask,
+                                    labels=labels)
             else:
                 outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
             lm_loss = outputs[0]
