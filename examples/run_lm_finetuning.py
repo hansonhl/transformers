@@ -206,22 +206,38 @@ def my_collate(batch, tokenizer):
     # logging.info("@@@@@@ padded.shape: {}".format(padded.shape))
     return padded, padding_mask
 
-def tag_scale(batch, tokenizer, scale_factor):
-    antec_beg_tok_id = tokenizer.encode("<anteced>")[0]
-    antec_end_tok_id = tokenizer.encode("</anteced>")[0]
-    anaph_beg_tok_id = tokenizer.encode("<anaphor>")[0]
-    anaph_end_tok_id = tokenizer.encode("</anaphor>")[0]
+def tag_scale(batch, tokenizer, scale_method, scale_factor):
+    if scale_method == 'both_vs_other' or scale_method == 'both_only':
+        antec_beg_tok_id = tokenizer.encode("<anteced>")[0]
+        antec_end_tok_id = tokenizer.encode("</anteced>")[0]
+        anaph_beg_tok_id = tokenizer.encode("<anaphor>")[0]
+        anaph_end_tok_id = tokenizer.encode("</anaphor>")[0]
 
+        # partially vectorized version ~ 30 times faster!
+        antec_beg_idx = torch.tensor([s.tolist().index(antec_beg_tok_id) for s in batch]).view(-1, 1)
+        antec_end_idx = torch.tensor([s.tolist().index(antec_end_tok_id) for s in batch]).view(-1, 1)
+        anaph_beg_idx = torch.tensor([s.tolist().index(anaph_beg_tok_id) for s in batch]).view(-1, 1)
+        anaph_end_idx = torch.tensor([s.tolist().index(anaph_end_tok_id) for s in batch]).view(-1, 1)
 
-    # partially vectorized version ~ 30 times faster!
-    antec_beg_idx = torch.tensor([s.tolist().index(antec_beg_tok_id) for s in batch]).view(-1, 1)
-    antec_end_idx = torch.tensor([s.tolist().index(antec_end_tok_id) for s in batch]).view(-1, 1)
-    anaph_beg_idx = torch.tensor([s.tolist().index(anaph_beg_tok_id) for s in batch]).view(-1, 1)
-    anaph_end_idx = torch.tensor([s.tolist().index(anaph_end_tok_id) for s in batch]).view(-1, 1)
+        ranges = torch.arange(batch.size(1)).view(1, -1).repeat_interleave(batch.size(0), dim=0)
+        booltensor = ((ranges >= antec_beg_idx) & (ranges <= antec_end_idx)) | ((ranges >= anaph_beg_idx) & (ranges <= anaph_end_idx))
+        if scale_method == 'both_vs_other':
+            res = torch.where(booltensor, torch.tensor(scale_factor), torch.tensor(1.))
+        else:
+            res = torch.where(booltensor, torch.tensor(1.), torch.tensor(0.))
 
-    ranges = torch.arange(batch.size(1)).view(1, -1).repeat_interleave(batch.size(0), dim=0)
-    booltensor = ((ranges >= antec_beg_idx) & (ranges <= antec_end_idx)) | ((ranges >= anaph_beg_idx) & (ranges <= anaph_end_idx))
-    res = torch.where(booltensor, torch.tensor(1.5), torch.tensor(1.))
+    if scale_method == 'anaphor_vs_other' or scale_method == 'anaphor_only':
+        anaph_beg_tok_id = tokenizer.encode("<anaphor>")[0]
+        anaph_end_tok_id = tokenizer.encode("</anaphor>")[0]
+        anaph_beg_idx = torch.tensor([s.tolist().index(anaph_beg_tok_id) for s in batch]).view(-1, 1)
+        anaph_end_idx = torch.tensor([s.tolist().index(anaph_end_tok_id) for s in batch]).view(-1, 1)
+        ranges = torch.arange(batch.size(1)).view(1, -1).repeat_interleave(batch.size(0), dim=0)
+        booltensor = (ranges > anaph_beg_idx) & (ranges <= anaph_end_idx)
+        if scale_method == 'anaphor_vs_other':
+            res = torch.where(booltensor, torch.tensor(scale_factor), torch.tensor(1.))
+        else:
+            res = torch.where(booltensor, torch.tensor(1.), torch.tensor(0.))
+
     return res
 
 def my_scaled_collate(batch, tokenizer, scale_method, scale_factor):
@@ -233,7 +249,7 @@ def my_scaled_collate(batch, tokenizer, scale_method, scale_factor):
     sorted_batch = sorted(batch, key=lambda b: b.shape[0], reverse=True)
     padded = torch.nn.utils.rnn.pad_sequence(sorted_batch, batch_first=True,
                                              padding_value=pad_token_id)
-    scaling = tag_scale(padded, tokenizer, scale_factor)
+    scaling = tag_scale(padded, tokenizer, scale_method, scale_factor)
     lengths = torch.LongTensor([len(x) for x in sorted_batch])
     padding_mask = (torch.arange(padded.shape[1])[None, :] < lengths[:, None]) \
                    .type(torch.FloatTensor)
